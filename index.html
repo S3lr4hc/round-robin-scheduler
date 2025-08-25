@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bowling Round Robin Scheduler</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22c55e; --danger:#ef4444; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; background: var(--bg); color: var(--text); }
+    header { padding: 24px; border-bottom: 1px solid #1f2937; position: sticky; top:0; background: linear-gradient(180deg, rgba(15,23,42,.95), rgba(15,23,42,.85)); backdrop-filter: blur(6px); z-index: 10; }
+    h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
+    main { padding: 24px; max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 360px 1fr; gap: 24px; }
+    .card { background: var(--card); border: 1px solid #1f2937; border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+    .panel { padding: 16px; }
+    .muted { color: var(--muted); font-size: 12px; }
+    label { font-size: 12px; color: var(--muted); display:block; margin-bottom: 6px; }
+    textarea, input[type="text"], input[type="number"], input[type="checkbox"] { width: 100%; background: #0b1220; color: var(--text); border: 1px solid #1f2937; border-radius: 10px; padding: 10px 12px; outline: none; font-size: 14px; }
+    input[type="checkbox"] { width: auto; height: 16px; vertical-align: middle; }
+    textarea { min-height: 160px; resize: vertical; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    button { appearance: none; border: 0; background: var(--accent); color: #052e16; font-weight: 700; padding: 10px 14px; border-radius: 10px; cursor: pointer; box-shadow: 0 8px 14px rgba(34,197,94,.25); }
+    button.secondary { background: #0b1220; color: var(--text); border: 1px solid #1f2937; box-shadow: none; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .stack { display: grid; gap: 12px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
+    .ok { color: #86efac; font-size: 13px; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; }
+    thead th { position: sticky; top: 0; background: #0b1220; border-bottom: 1px solid #1f2937; padding: 10px; text-align: left; font-size: 12px; color: var(--muted); }
+    tbody td { padding: 10px; border-bottom: 1px solid #1f2937; font-size: 14px; }
+    .grid { display: grid; gap: 16px; }
+    .round { overflow: hidden; }
+    .round h3 { margin: 0; padding: 12px 16px; border-bottom: 1px solid #1f2937; font-size: 14px; color: var(--muted); background: #0b1220; }
+    .round .panel { padding-top: 0; }
+    .pill { padding: 4px 8px; border-radius: 999px; background: #052e16; color: #86efac; font-size: 12px; border: 1px solid #14532d; }
+    .footer { padding: 16px; border-top: 1px solid #1f2937; display:flex; align-items:center; justify-content:space-between; }
+    code.inline { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background: #0b1220; padding: 2px 6px; border-radius: 6px; border: 1px solid #1f2937; font-size: 12px; color: #cbd5e1; }
+    details summary { cursor: pointer; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Bowling Round Robin Scheduler <span class="muted">· 10 teams · 9 rounds · lane-pair cap = 2</span></h1>
+  </header>
+
+  <main>
+    <!-- Left: Controls -->
+    <section class="card panel stack">
+      <div>
+        <label for="teams">Teams (one per line, must be an even count — 10 by default)</label>
+        <textarea id="teams">T1
+T2
+T3
+T4
+T5
+T6
+T7
+T8
+T9
+T10</textarea>
+      </div>
+
+      <div>
+        <label for="lanes">Lane Pairs (one per line; must be exactly n/2)</label>
+        <textarea id="lanes">(1-2)
+(3-4)
+(5-6)
+(7-8)
+(9-10)</textarea>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="cap">Max times a team can use the same lane pair</label>
+          <input id="cap" type="number" value="2" min="1" />
+        </div>
+        <div>
+          <label for="seed">Preferred seed (optional)</label>
+          <input id="seed" type="text" placeholder="e.g. 42" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="attempts">Auto-retry with seeds (tries)</label>
+          <input id="attempts" type="number" value="100" min="0" />
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:18px;">
+          <input id="shuffleMatches" type="checkbox" checked />
+          <label for="shuffleMatches" style="margin:0;">Shuffle within rounds (improves success)</label>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="generate">Generate schedule</button>
+        <button id="exportCsv" class="secondary" disabled>Export CSV</button>
+        <button id="runTests" class="secondary">Run self-tests</button>
+      </div>
+      <div id="error" class="error" role="alert" aria-live="polite"></div>
+      <div id="status" class="ok" aria-live="polite"></div>
+      <p class="muted">Uses round-robin pairing (circle method) plus backtracking **across rounds**. If a later round fails, it now backtracks earlier rounds before retrying. If a seed fails, it will auto-retry with different seeds up to the limit above.</p>
+    </section>
+
+    <!-- Right: Output -->
+    <section class="grid">
+      <div class="card round" id="scheduleCard" hidden>
+        <h3>Schedule <span id="summary" class="pill" title="Summary">–</span></h3>
+        <div class="panel" id="schedule"></div>
+        <div class="footer">
+          <span class="muted">One match per lane pair per round.</span>
+          <button id="copySchedule" class="secondary">Copy table</button>
+        </div>
+      </div>
+
+      <div class="card" id="usageCard" hidden>
+        <div class="panel">
+          <h3 style="margin:0 0 12px 0; font-size:14px; color:var(--muted)">Per-Team Lane-Pair Usage (must be = cap)</h3>
+          <div id="usage"></div>
+        </div>
+        <div class="footer">
+          <span class="muted">Shows how many times each team used each lane pair.</span>
+          <button id="copyUsage" class="secondary">Copy table</button>
+        </div>
+      </div>
+
+      <details class="card panel" id="testPanel" open>
+        <summary>Self-tests</summary>
+        <div id="testOutput" class="muted"></div>
+      </details>
+    </section>
+  </main>
+
+  <script>
+    // ———————————————— Utilities ————————————————
+    function linesToList(text) { return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); }
+    function seededRng(seed) {
+      if (seed === undefined || seed === null || seed === "") return null;
+      // Simple xorshift32
+      let x = 0;
+      const s = String(seed);
+      for (let i = 0; i < s.length; i++) x ^= s.charCodeAt(i) << (i % 24);
+      return function() { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; return (x >>> 0) / 2**32; };
+    }
+    function shuffle(arr, rng) {
+      if (!rng) return arr;
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    // ————————— Round-robin generator (circle method) —————————
+    function generateRoundRobin(teams) {
+      const n = teams.length;
+      if (n % 2 !== 0) throw new Error("Number of teams must be even.");
+      const fixed = teams[0];
+      let others = teams.slice(1);
+      const R = n - 1;
+      const half = n / 2;
+      const schedule = [];
+      for (let r = 0; r < R; r++) {
+        const roundPairs = [];
+        const left = [fixed, ...others.slice(0, half - 1)];
+        const right = others.slice(half - 1).reverse();
+        for (let i = 0; i < half; i++) roundPairs.push([left[i], right[i]]);
+        others = [...others.slice(1), others[0]]; // rotate
+        schedule.push(roundPairs);
+      }
+      return schedule;
+    }
+
+    // ————————— Lane assignment via backtracking (across rounds) —————————
+    function assignLanes(rr, lanePairs, maxPerPair, rng, enableShuffleWithinRound = true) {
+      const R = rr.length;
+      const M = rr[0]?.length || 0;
+      if (lanePairs.length !== M) throw new Error("Each round must have exactly one match per lane pair.");
+
+      const usage = new Map(); // key `${team}|${lane}` -> count
+      const getU = (t, l) => usage.get(`${t}|${l}`) || 0;
+      const addU = (t, l, d) => usage.set(`${t}|${l}`, (usage.get(`${t}|${l}`) || 0) + d);
+
+      // We'll only commit to `assigned` once deeper rounds succeed; this allows proper backtracking across rounds.
+      const assigned = Array.from({ length: R }, () => Array(M).fill(null));
+
+      function assignRound(rIdx) {
+        if (rIdx === R) return true; // all rounds done
+
+        // Prepare this round's matches ordered by pressure
+        const matches = rr[rIdx].slice();
+        matches.sort((a,b)=>{
+          const pressureA = Math.max(...lanePairs.map(lp => Math.max(getU(a[0], lp), getU(a[1], lp))));
+          const pressureB = Math.max(...lanePairs.map(lp => Math.max(getU(b[0], lp), getU(b[1], lp))));
+          return pressureB - pressureA; // desc: schedule high-pressure first
+        });
+        if (enableShuffleWithinRound && rng) shuffle(matches, rng);
+
+        const used = new Set();
+        const laneAssignment = new Array(M);
+
+        function assignMatch(mIdx) {
+          if (mIdx === M) {
+            // All matches in this round assigned; try the next round before committing
+            if (assignRound(rIdx + 1)) {
+              // Commit this round's assignments now
+              matches.forEach(([A,B], i) => { assigned[rIdx][i] = [A, B, laneAssignment[i]]; });
+              return true;
+            }
+            return false; // backtrack to try a different lane layout for this round
+          }
+
+          const [A,B] = matches[mIdx];
+          const candidates = lanePairs.filter(lp => !used.has(lp))
+            .sort((l1,l2)=>{
+              const s1 = getU(A,l1)+getU(B,l1), s2 = getU(A,l2)+getU(B,l2);
+              if (s1 !== s2) return s1 - s2; // prefer lower combined usage
+              return Math.max(getU(A,l1),getU(B,l1)) - Math.max(getU(A,l2),getU(B,l2));
+            });
+          if (rng) shuffle(candidates, rng);
+
+          for (const lp of candidates) {
+            if (getU(A, lp) >= maxPerPair || getU(B, lp) >= maxPerPair) continue;
+            // Tentatively assign
+            addU(A, lp, 1); addU(B, lp, 1);
+            used.add(lp); laneAssignment[mIdx] = lp;
+
+            if (assignMatch(mIdx + 1)) return true;
+
+            // Revert
+            used.delete(lp); laneAssignment[mIdx] = undefined;
+            addU(A, lp, -1); addU(B, lp, -1);
+          }
+          return false;
+        }
+        return assignMatch(0);
+      }
+
+      return assignRound(0) ? assigned : null;
+    }
+
+    // ————————— Verification —————————
+    function verify(assigned, lanePairs, maxPerPair) {
+      // Round coverage
+      assigned.forEach((round, idx) => {
+        const lanes = round.map(m => m[2]).slice().sort().join("|");
+        const expect = lanePairs.slice().sort().join("|");
+        if (lanes !== expect) throw new Error(`Round ${idx+1} doesn't use each lane exactly once.`);
+      });
+      // Cap check
+      const counts = {};
+      assigned.flat().forEach(([a,b,lp]) => {
+        for (const t of [a,b]) {
+          counts[t] ??= {}; counts[t][lp] = (counts[t][lp]||0)+1;
+          if (counts[t][lp] > maxPerPair) throw new Error(`${t} uses lane ${lp} ${counts[t][lp]} times (> cap)`);
+        }
+      });
+    }
+
+    // ————————— Render helpers —————————
+    function renderSchedule(container, assigned) {
+      container.innerHTML = "";
+      assigned.forEach((round, rIdx) => {
+        const tbl = document.createElement("table");
+        const thead = document.createElement("thead");
+        thead.innerHTML = `<tr><th style="width:120px">Lane Pair</th><th>Team A</th><th>Team B</th></tr>`;
+        tbl.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        round.forEach(([a,b,lp]) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td><code class="inline">${lp}</code></td><td>${a}</td><td>${b}</td>`;
+          tbody.appendChild(tr);
+        });
+        tbl.appendChild(tbody);
+        const card = document.createElement("div");
+        card.className = "card round";
+        const h = document.createElement("h3");
+        h.textContent = `Round ${rIdx+1}`;
+        const wrap = document.createElement("div");
+        wrap.className = "panel";
+        wrap.appendChild(tbl);
+        card.appendChild(h); card.appendChild(wrap);
+        container.appendChild(card);
+      });
+    }
+
+    function computeUsage(assigned) {
+      const usage = {};
+      assigned.flat().forEach(([a,b,lp]) => {
+        for (const t of [a,b]) {
+          usage[t] ??= {}; usage[t][lp] = (usage[t][lp]||0)+1;
+        }
+      });
+      return usage;
+    }
+
+    function renderUsage(container, usage, lanePairs) {
+      const tbl = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headCells = ["Team", ...lanePairs, "Total"]; 
+      thead.innerHTML = `<tr>${headCells.map(h=>`<th>${h}</th>`).join("")}</tr>`;
+      tbl.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      Object.keys(usage).sort().forEach(team => {
+        const counts = lanePairs.map(lp => usage[team][lp]||0);
+        const total = counts.reduce((a,b)=>a+b,0);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${team}</td>${counts.map(c=>`<td>${c}</td>`).join("")}<td>${total}</td>`;
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      container.innerHTML = ""; container.appendChild(tbl);
+    }
+
+    function toCSV(assigned) {
+      const rows = [["Round","LanePair","TeamA","TeamB"]];
+      assigned.forEach((round, rIdx) => {
+        round.forEach(([a,b,lp]) => rows.push([rIdx+1, lp, a, b]));
+      });
+      return rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    }
+
+    async function copyTable(container) {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNode(container);
+      sel.removeAllRanges(); sel.addRange(range);
+      try { document.execCommand('copy'); } finally { sel.removeAllRanges(); }
+    }
+
+    // ————————— Find assignment with auto-retry —————————
+    function findAssignment(rr, lanes, cap, preferredSeed, tries, shuffleWithinRound) {
+      const seeds = [];
+      if (preferredSeed !== undefined && preferredSeed !== null && String(preferredSeed) !== "") {
+        seeds.push(preferredSeed);
+      }
+      for (let i = 0; i < tries; i++) seeds.push(`auto-${i}`);
+
+      for (let attempt = 0; attempt < seeds.length; attempt++) {
+        const seed = seeds[attempt];
+        const rng = seededRng(seed);
+        const assigned = assignLanes(rr, lanes, cap, rng, shuffleWithinRound);
+        if (assigned) {
+          return { assigned, seed, attempts: attempt + 1 };
+        }
+      }
+      return null;
+    }
+
+    // ————————— Wire up UI —————————
+    const $teams = document.getElementById('teams');
+    const $lanes = document.getElementById('lanes');
+    const $cap = document.getElementById('cap');
+    const $seed = document.getElementById('seed');
+    const $attempts = document.getElementById('attempts');
+    const $shuffleMatches = document.getElementById('shuffleMatches');
+    const $error = document.getElementById('error');
+    const $status = document.getElementById('status');
+    const $generate = document.getElementById('generate');
+    const $export = document.getElementById('exportCsv');
+    const $scheduleCard = document.getElementById('scheduleCard');
+    const $usageCard = document.getElementById('usageCard');
+    const $schedule = document.getElementById('schedule');
+    const $usage = document.getElementById('usage');
+    const $copySchedule = document.getElementById('copySchedule');
+    const $copyUsage = document.getElementById('copyUsage');
+
+    const $testPanel = document.getElementById('testPanel');
+    const $testOutput = document.getElementById('testOutput');
+    const $runTests = document.getElementById('runTests');
+
+    let lastAssigned = null;
+
+    function resetOutput() {
+      $error.textContent = '';
+      $status.textContent = '';
+      $scheduleCard.hidden = true; $usageCard.hidden = true; $export.disabled = true; lastAssigned = null;
+    }
+
+    $generate.addEventListener('click', () => {
+      resetOutput();
+      try {
+        const teams = linesToList($teams.value);
+        const lanes = linesToList($lanes.value);
+        const cap = Math.max(1, Number($cap.value)||2);
+        const seedVal = $seed.value; // may be empty string
+        const tries = Math.max(0, Number($attempts.value)||0);
+        const shuffleWithinRound = !!$shuffleMatches.checked;
+
+        if (teams.length === 0) throw new Error('Enter at least 2 teams.');
+        if (teams.length % 2 !== 0) throw new Error('Number of teams must be even.');
+        const half = teams.length/2;
+        if (lanes.length !== half) throw new Error(`Need exactly ${half} lane pairs for ${teams.length} teams (n/2).`);
+
+        const rr = generateRoundRobin(teams);
+
+        // First try (use preferred seed if any, then auto-retry)
+        const result = findAssignment(rr, lanes, cap, seedVal, tries, shuffleWithinRound);
+        if (!result) throw new Error('No valid assignment found after retries. Increase attempts, toggle shuffle, or relax the cap.');
+
+        const { assigned, seed, attempts } = result;
+        verify(assigned, lanes, cap);
+        renderSchedule($schedule, assigned);
+        const usage = computeUsage(assigned);
+        renderUsage($usage, usage, lanes);
+
+        $scheduleCard.hidden = false; $usageCard.hidden = false; $export.disabled = false;
+        lastAssigned = assigned;
+        document.getElementById('summary').textContent = `${teams.length} teams · ${rr.length} rounds · ${lanes.length} lane pairs · seed=${seed} (found in ${attempts} attempt${attempts>1?'s':''})`;
+        $status.textContent = 'Success: schedule generated.';
+      } catch (e) {
+        console.error(e); $error.textContent = e.message || String(e);
+      }
+    });
+
+    $export.addEventListener('click', () => {
+      if (!lastAssigned) return;
+      const csv = toCSV(lastAssigned);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'schedule.csv';
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+    });
+
+    $copySchedule.addEventListener('click', () => copyTable($schedule));
+    $copyUsage.addEventListener('click', () => copyTable($usage));
+
+    // ————————— Self-tests —————————
+    function assert(cond, msg) { if (!cond) throw new Error(msg); }
+    function testCase(name, fn) {
+      try { fn(); return { name, ok: true }; }
+      catch (e) { return { name, ok: false, error: e.message || String(e) }; }
+    }
+
+    function runSelfTests() {
+      const out = [];
+      // Test 1: 10 teams, 5 lanes, cap=2 (should succeed)
+      out.push(testCase('10 teams, 5 lanes, cap=2 succeeds', () => {
+        const teams = Array.from({length:10}, (_,i)=>`T${i+1}`);
+        const lanes = ['(1-2)','(3-4)','(5-6)','(7-8)','(9-10)'];
+        const rr = generateRoundRobin(teams);
+        const res = findAssignment(rr, lanes, 2, '', 50, true);
+        assert(res && res.assigned, 'Expected a valid assignment');
+        verify(res.assigned, lanes, 2);
+      }));
+
+      // Test 2: Multiple seeds should still succeed
+      out.push(testCase('Varied seeds work', () => {
+        const teams = Array.from({length:10}, (_,i)=>`T${i+1}`);
+        const lanes = ['(1-2)','(3-4)','(5-6)','(7-8)','(9-10)'];
+        const rr = generateRoundRobin(teams);
+        for (let s of ['1','2','3','alpha','bravo']) {
+          const rng = seededRng(s);
+          const assigned = assignLanes(rr, lanes, 2, rng, true);
+          assert(assigned, `Seed ${s} should find a schedule`);
+          verify(assigned, lanes, 2);
+        }
+      }));
+
+      // Test 3: 8 teams, 4 lanes, cap=2 (should succeed)
+      out.push(testCase('8 teams, 4 lanes, cap=2 succeeds', () => {
+        const teams = Array.from({length:8}, (_,i)=>`T${i+1}`);
+        const lanes = ['(1-2)','(3-4)','(5-6)','(7-8)'];
+        const rr = generateRoundRobin(teams);
+        const res = findAssignment(rr, lanes, 2, '', 50, true);
+        assert(res && res.assigned, 'Expected a valid assignment');
+        verify(res.assigned, lanes, 2);
+      }));
+
+      // Test 4: 10 teams with cap=1 is impossible (9 matches per team, only 5 lanes * 1 = 5 capacity)
+      out.push(testCase('10 teams, 5 lanes, cap=1 is infeasible', () => {
+        const teams = Array.from({length:10}, (_,i)=>`T${i+1}`);
+        const lanes = ['(1-2)','(3-4)','(5-6)','(7-8)','(9-10)'];
+        const rr = generateRoundRobin(teams);
+        const res = findAssignment(rr, lanes, 1, '', 20, true);
+        assert(res === null, 'Should not find a schedule when cap=1');
+      }));
+
+      // Render results
+      const passCount = out.filter(r=>r.ok).length;
+      const failCount = out.length - passCount;
+      $testOutput.innerHTML = out.map(r => r.ok ? `? ${r.name}` : `? ${r.name} — ${r.error}`).join('<br/>') +
+        `<div style="margin-top:8px;">Passed ${passCount}/${out.length} tests.</div>`;
+    }
+
+    document.getElementById('runTests').addEventListener('click', runSelfTests);
+
+    // Run tests once on load for quick feedback
+    runSelfTests();
+  </script>
+</body>
+</html>
